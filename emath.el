@@ -170,21 +170,21 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
             ;; They're not all integers, so go ahead and do it numerically.
             (setq numerator (/ numerator divisor) divisor 1))
 
-          ;; Divide the powers into those with positive exponents and those
-          ;; with negative exponents, so we can produce a fraction if necessary.
-          ;; Convert from pairs to expressions.
+          ;; Split the powers into those with positive exponents and those with
+          ;; negative exponents, so we can produce a fraction if necessary.
+          ;; Convert from (base . exponent) pairs to expressions.
           (let (positive negative)
             (dolist (pair (reverse powers))
               (let* ((base (car pair)) (exp (cdr pair)))
                 (if (and (numberp exp) (< exp 0))
                     (push (expr** base (- exp)) negative)
                   (push (expr** base exp) positive))))
+
+            ;; Combine the factor lists and the constants into an expression.
             (unless (= numerator 1)
               (push numerator positive))
             (unless (= divisor 1)
               (push divisor negative))
-
-            ;; Convert the factor lists into expressions.
             (setq positive (pcase positive
                              (`() 1)
                              (`(,x) x)
