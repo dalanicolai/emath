@@ -43,14 +43,47 @@
   (should (equal (derivative2* 'x 'x 7) 7))
   (should (equal (derivative2* 'x 7 'x) 7)))
 
-(defun fold (fn initial list)
-  (while list
-    (setq initial (funcall fn initial (car list))
-          list (cdr list)))
-  initial)
+
+;;; sot - a restricted sum-of-terms representation of expressions.
+;;;
+;;; A `sot` is a list `(num denom map)` where num and denom are numeric
+;;; constants and `map` is an alist mapping `term`s onto numeric coefficients,
+;;; representing the sum of (/ num denom) and the weighted sum of the map. Each
+;;; term appears exactly once in the map. Denom is always positive. If num and
+;;; denom are exact integers, they are relatively prime.
+;;;
+;;; A `term` is a list `(num denom map)` where num and denom are numeric
+;;; constants and `map` is a non-empty map from `factor`s onto `exponent`s. A
+;;; `term` represents the product of (/ num denom) and the factors raised to
+;;; their exponents. Each factor appears exactly once in the map. Denom is
+;;; always positive. If num and denom are exact integers, they are relatively prime.
+;;;
+;;; A `factor` is a variable or a function application where the function is not
+;;; `+`, `-`, `*`, `/`, or `**`. `+` and `-` should be distributed to other
+;;; `terms`; `*` and `/` should be flattened out into the `term`; and `**` should be
+;;; combined into the `factor`'s exponent.
+;;;
+;;; An `exponent` is another `sot`.
+;;;
+;;; The maps in the above descriptions are association lists.
+;;;
+;;; So, the following are valid sots:
+;;;
+;;; (42 1)                      ; the constant 42
+;;; (0 1 (1 1 (x . 1)))         ; the variable x
+;;; (1 3 (-2 7 (x . 2)))        ; (+ (* (/ 2 7) (expt x 2)) (/ 1 3))
+;;; (0 1 (1 1 (x . 2) (y . -1)) ; (/ (expt x 2) y)
 
-(defun app-p (op e)
-  (and (consp e) (eq (car e) op)))
+(defun sot (e)
+  "Convert the expression 'e' to sot form."
+  (pcase e
+    ((and (pred numberp) e) `(,e 1))
+    ((and (pred symbolp) e) `(0 1 (1 1 (,e 1))))
+    (`(+) (sot 0))
+    (`(+ ,e) (sot e))
+    (`(+ . ,es) ;; convert addends, combine like terms
+
+    
 
 (defun expr2+ (a b)
   (cond
@@ -305,3 +338,15 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
   (should (equal (expr/* '(10 x y) '(5 z x)) '(/ (* 2 y) z)))
   (should (equal (expr/* '(2) '(2 x)) '(/ 1 x)))
 )
+
+
+;;; primitives
+
+(defun fold (fn initial list)
+  (while list
+    (setq initial (funcall fn initial (car list))
+          list (cdr list)))
+  initial)
+
+(defun app-p (op e)
+  (and (consp e) (eq (car e) op)))
