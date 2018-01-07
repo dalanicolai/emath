@@ -1,12 +1,19 @@
-(require 'ert)
+;;;; emath.el - symbolic algebra in Emacs Lisp
+;;;; Jim Blandy <jimb@red-bean.com>
 
-(defun derivative (v e)
+;;; A toy. This is probably not as good at what it does as Calc mode, since
+;;; that's been around longer.
+
+(require 'ert)
+(require 'cl-extra)
+
+(defun emath-derivative (v e)
   (pcase e
     ((pred symbolp) (if (eq e v) 1 e))
     ((pred numberp) 0)
     (`(+) 0)
-    (`(+ ,x . ,ys) (expr+ (derivative v x)
-                          (derivative v (apply #'expr+ ys))))
+    (`(+ ,x . ,ys) (expr+ (emath-derivative v x)
+                          (emath-derivative v (apply #'expr+ ys))))
     (`(*) 0)
     (`(* ,x . ,ys) (derivative2* v x (apply #'expr* ys)))
     (`(/ ,x ,y) (derivative2* v x (expr** y -1)))
@@ -14,49 +21,46 @@
      (if (equal y 0) 0
        (expr* y
               (expr** x (- y 1))
-              (derivative v x))))
-    (`(ln ,x) (expr/ (derivative v x) x))
-    (`(sin ,x) (expr* `(cos ,x) (derivative v x)))
-    (`(cos ,x) (expr* -1 `(sin ,x) (derivative v x)))
+              (emath-derivative v x))))
+    (`(ln ,x) (expr/ (emath-derivative v x) x))
+    (`(sin ,x) (expr* `(cos ,x) (emath-derivative v x)))
+    (`(cos ,x) (expr* -1 `(sin ,x) (emath-derivative v x)))
     (_ (error "Don't know how to differentiate %S" e))))
 
-(ert-deftest math-derivative ()
-  (should (equal (derivative 'x 'x)                   1))
-  (should (equal (derivative 'x 7)                    0))
-  (should (equal (derivative 'x '(+ x 7))             1))
-  (should (equal (derivative 'x '(* x 7))             7))
-  (should (equal (derivative 'x '(* 3 (** x 2)))      '(* 6 x)))
-  (should (equal (derivative 'x '(ln x))              '(/ 1 x)))
-  (should (equal (derivative 'x '(ln (* 2 x)))        '(/ 1 x)))
-  (should (equal (derivative 'x '(ln (** x 2)))       '(/ 2 x)))
-  (should (equal (derivative 'x '(ln 1))              0))
-  (should (equal (derivative 'x '(sin x))             '(cos x)))
-  (should (equal (derivative 'x '(sin (** x 2)))      '(* 2 (cos (** x 2)) x)))
-  (should (equal (derivative 'x '(** (sin x) 3))      '(* 3 (** (sin x) 2) (cos x))))
+(ert-deftest emath-derivative ()
+  (should (equal (emath-derivative 'x 'x)                   1))
+  (should (equal (emath-derivative 'x 7)                    0))
+  (should (equal (emath-derivative 'x '(+ x 7))             1))
+  (should (equal (emath-derivative 'x '(* x 7))             7))
+  (should (equal (emath-derivative 'x '(* 3 (** x 2)))      '(* 6 x)))
+  (should (equal (emath-derivative 'x '(ln x))              '(/ 1 x)))
+  (should (equal (emath-derivative 'x '(ln (* 2 x)))        '(/ 1 x)))
+  (should (equal (emath-derivative 'x '(ln (** x 2)))       '(/ 2 x)))
+  (should (equal (emath-derivative 'x '(ln 1))              0))
+  (should (equal (emath-derivative 'x '(sin x))             '(cos x)))
+  (should (equal (emath-derivative 'x '(sin (** x 2)))      '(* 2 (cos (** x 2)) x)))
+  (should (equal (emath-derivative 'x '(** (sin x) 3))      '(* 3 (** (sin x) 2) (cos x))))
 )
 
 (defun derivative2* (v a b)
-  (expr+ (expr* (derivative v a) b)
-         (expr* a (derivative v b))))
+  (expr+ (expr* (emath-derivative v a) b)
+         (expr* a (emath-derivative v b))))
 
-(ert-deftest math-derivative2* ()
+(ert-deftest emath-derivative2* ()
   (should (equal (derivative2* 'x 'x 7) 7))
   (should (equal (derivative2* 'x 7 'x) 7)))
 
 
 ;;; sot - a restricted sum-of-terms representation of expressions.
 ;;;
-;;; A `sot` is a list `(num denom map)` where num and denom are numeric
-;;; constants and `map` is an alist mapping `term`s onto numeric coefficients,
-;;; representing the sum of (/ num denom) and the weighted sum of the map. Each
-;;; term appears exactly once in the map. Denom is always positive. If num and
-;;; denom are exact integers, they are relatively prime.
+;;; A `sot` is a list `(k map)` where k is a `number` and `map` is an alist
+;;; mapping `term`s onto `number` coefficients, representing the sum of k and
+;;; the weighted sum of the map. Each term appears exactly once in the map.
 ;;;
-;;; A `term` is a list `(num denom map)` where num and denom are numeric
-;;; constants and `map` is a non-empty map from `factor`s onto `exponent`s. A
-;;; `term` represents the product of (/ num denom) and the factors raised to
-;;; their exponents. Each factor appears exactly once in the map. Denom is
-;;; always positive. If num and denom are exact integers, they are relatively prime.
+;;; A `term` is a non-empty map from `factor`s onto `exponent`s. A `term`
+;;; represents the product of the factors raised to their exponents. Each factor
+;;; appears exactly once in the map. Denom is always positive. If num and denom
+;;; are exact integers, they are relatively prime.
 ;;;
 ;;; A `factor` is a variable or a function application where the function is not
 ;;; `+`, `-`, `*`, `/`, or `**`. `+` and `-` should be distributed to other
@@ -65,14 +69,20 @@
 ;;;
 ;;; An `exponent` is another `sot`.
 ;;;
+;;; A `number` is either an integer, a floating-point value, or a pair `(num .
+;;; denom)`, where `num` and `denom` are integers with no common divisior and
+;;; `denom` is a positive integer greater than 1, representing the ratio num /
+;;; denom.
+;;;
 ;;; The maps in the above descriptions are association lists.
 ;;;
 ;;; So, the following are valid sots:
 ;;;
-;;; (42 1)                      ; the constant 42
-;;; (0 1 (1 1 (x . 1)))         ; the variable x
-;;; (1 3 (-2 7 (x . 2)))        ; (+ (* (/ 2 7) (expt x 2)) (/ 1 3))
-;;; (0 1 (1 1 (x . 2) (y . -1)) ; (/ (expt x 2) y)
+;;; (42)                                ; the constant 42
+;;; ((2 . 3))                           ; the constant 2/3
+;;; (0 (((x . 1)) . 1))                 ; the variable x
+;;; ((1 . 3) (((x . 2)) (-2 . 7)))      ; 1/3 - 2/7 x^2
+;;; (0 (((x . 2) (y . -1)) . 1)         ; x^2/y
 
 (defun sot (e)
   "Convert the expression 'e' to sot form."
@@ -81,8 +91,12 @@
     ((and (pred symbolp) e) `(0 1 (1 1 (,e 1))))
     (`(+) (sot 0))
     (`(+ ,e) (sot e))
-    (`(+ . ,es) ;; convert addends, combine like terms
+    (`(+ . ,es)
+     (let ((es (mapcar #'sot es)))
+       (
 
+(defun insert-term (map term coeff)
+  (emath-insert map #'
     
 
 (defun expr2+ (a b)
@@ -100,7 +114,7 @@
     (`(,x) x)
     (xs (fold #'expr2+ 0 xs))))
 
-(ert-deftest math-expr+ ()
+(ert-deftest emath-expr+ ()
   (should (equal (expr+) 0))
   (should (equal (expr+ 'x) 'x))
   (should (equal (expr+ 1 2) 3))
@@ -124,16 +138,9 @@
    (t `(* ,a ,b))))
 
 (defun insert-power (powers base exp)
-  (let ((pair (assoc base powers)))
-    (if (not pair)
-        (setq powers (append powers `((,base . ,exp))))
-      (let ((new (expr+ exp (cdr pair))))
-        (if (equal new 0)
-            (setq powers (delq pair powers))
-          (setf (cdr pair) new)))))
-  powers)
+  (emath-insert powers #'expr+ #'zerop base exp))
 
-(ert-deftest math-insert-power ()
+(ert-deftest emath-insert-power ()
   (should (equal (insert-power '() 'x 1) '((x . 1))))
   (should (equal (insert-power '((x . 1)) 'x 1) '((x . 2))))
   (should (equal (insert-power '((x . 2)) 'y 1) '((x . 2) (y . 1))))
@@ -151,7 +158,7 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
                          `(,x ,@(mapcar (lambda (x) (expr** x -1)) divisors))))
     (x `(,x))))
 
-(ert-deftest math-flatten*/ ()
+(ert-deftest emath-flatten*/ ()
   (should (equal (flatten*/ '(*)) ()))
   (should (equal (flatten*/ '(* x y)) '(x y)))
   (should (equal (flatten*/ '(/ v w)) '(v (** w -1))))
@@ -231,7 +238,7 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
               (`(,n 1) n)
               (`(,n ,d) `(/ ,n ,d)))))))))
 
-(ert-deftest math-expr* ()
+(ert-deftest emath-expr* ()
   (should (equal (expr*) 1))
   (should (equal (expr* 'x) 'x))
   (should (equal (expr* 2 3) 6))
@@ -270,7 +277,7 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
     (`((** ,a ,b) ,c) (expr** a (expr* b c)))
     (`(,a ,b) `(** ,a ,b))))
 
-(ert-deftest math-expr** ()
+(ert-deftest emath-expr** ()
   (should (equal (expr** 'x 0) 1))
   (should (equal (expr** 'x 1) 'x))
   (should (equal (expr** 0 'x) 0))
@@ -291,14 +298,14 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
     (`%e 1)
     (x `(ln ,x))))
 
-(ert-deftest math-expr-ln ()
+(ert-deftest emath-expr-ln ()
   (should (equal (expr-ln 1) 0))
   (should (equal (expr-ln '%e) 1))
   (should (equal (expr-ln 10) '(ln 10))))
 
 (defun expr/ (a b) (expr* a (expr** b -1)))
 
-(ert-deftest math-expr/ ()
+(ert-deftest emath-expr/ ()
   (should (equal (expr/ 0 'q) 0))
   (should (equal (expr/ 'z 1) 'z))
   (should (equal (expr/ 4 2) 2))
@@ -328,7 +335,7 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
      ((null as) `(/ 1 ,(apply #'expr* bs)))
      (t `(/ ,(apply #'expr* as) ,(apply #'expr* bs))))))
 
-(ert-deftest math-expr/* ()
+(ert-deftest emath-expr/* ()
   (should (equal (expr/* '(1) '(2)) '(/ 1 2)))
   (should (equal (expr/* '(6) '(2)) '3))
   (should (equal (expr/* '(1) '(x)) '(/ 1 x)))
@@ -338,6 +345,153 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
   (should (equal (expr/* '(10 x y) '(5 z x)) '(/ (* 2 y) z)))
   (should (equal (expr/* '(2) '(2 x)) '(/ 1 x)))
 )
+
+
+;;; numbers
+
+;;; An emath number is either an integer, a float, or a ratio. (num . denom),
+;;; where both are integers, denom is greater than 1, and the two have no common
+;;; divisors, representing the fraction num/denom.
+;;;
+;;; Floats are treated as inexact values, integers and ratios are exact, and
+;;; inexactness is contagious.
+
+(defconst emath-num-conversions
+  '((integerp           floatp          float)
+    (integerp           emath-ratio-p   emath-ratio-from-integer)
+    (emath-ratio-p      floatp          emath-ratio-to-float))
+  "A table mapping pairs of numeric type predicates to conversion functions.
+This table drives the `emath-num-type-case` macro.
+Each entry has the form (from to converter), where `converter' is
+a function that converts values satisfying the predicate `from'
+to values satisfying the predicate `to'.
+
+All conversions from a type must be listed after all conversions to that type.
+
+If you view the set of conversions listed as a relation between
+the types mentioned, the set and relation must be an upper
+semilattice: there must be no cycles, and every pair of types
+must be convertible to some more general common type.")
+
+(defun emath-types ()
+  "Return a list of the types mentioned in `emath-num-conversions'.
+The result is ordered from least to most general."
+  (emath-topological-sort emath-num-conversions #'eq #'car #'cadr))
+
+
+
+(defun emath-num-+ (a b)
+  (emath-num-type-case (a b)
+    (integerp (+ a b))
+    (emath-ratio-p (emath-ratio-+ a b+)
+    (floatp (+ a b)))))
+        
+
+
+
+
+(defun emath-float-make (n)
+  "Given a float or some lower-ranked numeric type, return an approximately equivalent float."
+  (if 
+  (pcase n
+    ((pred integerp) (float n))
+    ((
+  
+(defun emath-num-+ (a b)
+  (cond
+   ((and (numberp a) (numberp b)) (+ a b))
+   ((and (emath-ratio-p a) (emath-ratio-p b)) (emath-ratio-+ a b))
+   ;; Now we know one is a ratio and one is a number.
+   ((emath-ratio-p b) (emath-num-+ b a))
+   ;; Now we know a is a ratio.
+   ((floatp b) (+ (emath-ratio-to-float a) b))
+   ;; Now we know b is an integer.
+   (t (emath-ratio-+ a (emath-ratio-from-integer b)))))
+
+(ert-deftest emath-num-+ ()
+  (should (equal (emath-num-+ 2          3)         5))
+  (should (equal (emath-num-+ 2.0        3)       5.0))
+  (should (equal (emath-num-+ '(2 . 3)   3) '(11 . 3)))
+  (should (equal (emath-num-+ 2        3.0)       5.0))
+  (should (equal (emath-num-+ 2.0      3.0)       5.0))
+  (should (equal (emath-num-+ '(2 . 3) 3.0)       5.0))
+
+
+
+;;; ratios
+
+;;; An emath ratio is a pair of two integers (num . denom) where denom is
+;;; greater than 1, and the two have no common divisors.i It represents the
+;;; fraction num/denom.
+
+(defun emath-ratio-p (x)
+  (and (consp x)
+       (integerp (car x))
+       (integerp (cdr x))
+       (> (cdr x) 1)))
+
+(defun emath-ratio-from-integer (n) (cons n 1))
+(defun emath-ratio-to-float (r) (/ (float (car r)) (cdr r)))
+
+(defun emath-ratio-+ (a b)
+  ;; Dividing out the lcm isn't really necessary: since we must compute and
+  ;; factor out the gcd after the addition anyway, simply multiplying each
+  ;; numerator by the other fraction's denominator would work too. But doing so
+  ;; keeps the factors by which we scale the numerators smaller, so there's less
+  ;; chance of overflow.
+  (let* ((lcm (cl-lcm (cdr a) (cdr b)))
+         (num (+ (* (car a) (/ lcm (cdr a)))
+                 (* (car b) (/ lcm (cdr b)))))
+         (gcd (gcd num lcm)))
+    (cons (/ num gcd) (/ lcm gcd))))
+
+(ert-deftest emath-ratio-+ ()
+  (should (equal (emath-ratio-+ '(4 . 5) '(2 . 3)) '(22 . 15)))
+  (should (equal (emath-ratio-+ '(1 . 3) '(1 . 6)) '(1 . 2)))
+  (should (equal (emath-ratio-+ '(1 . 264) '(1 . 312)) '(1 . 143)))
+  (should (equal (emath-ratio-+ '(3 . 35) '(1 . 21)) '(2 . 15)))
+  (should (equal (emath-ratio-+ '(-3 . 35) '(1 . 21)) '(-4 . 105)))
+)
+
+(defun emath-ratio-* (a b)
+  ;; Compute cross-fraction gcds, to avoid large intermediate products.
+  (let ((gcd-ab (gcd (car a) (cdr b)))
+        (gcd-ba (gcd (car b) (cdr a))))
+    (cons (* (/ (car a) gcd-ab) (/ (car b) gcd-ba))
+          (* (/ (cdr a) gcd-ba) (/ (cdr b) gcd-ab)))))
+
+(defun emath-ratio-reciprocal (a)
+  (emath-ratio-normalize-sign (cons (cdr a) (car a))))
+
+(ert-deftest emath-ratio-* ()
+  (should (equal (emath-ratio-* (cons (* 5 11) (* 2 3)) (cons (* 3 13) (* 5 7)))
+                 (cons (* 11 13) (* 2 7))))
+  (should (equal (emath-ratio-* '(61 . 59) '(59 . 61)) '(1 . 1)))
+  (should (equal (emath-ratio-* '(-1 . 1) '(22 . 7)) '(-22 . 7)))
+  )
+
+(defun emath-ratio-normalize-sign (a)
+  (if (< (cdr a) 0)
+      (cons (- (car a)) (- (cdr a)))
+    a))
+
+(defun emath-ratio-**-integer (base exp)
+  (cond
+   ((equal exp 1) base)
+   ((equal exp -1) (emath-ratio-normalize-sign
+                    (cons (cdr base) (car base))))
+   ((< exp 0) (emath-reciprocal (cons (expt (car base) (- exp))
+                                      (expt (cdr base) (- exp)))))
+   (t (cons (expt (car base) exp)
+            (expt (cdr base) exp)))))
+
+(ert-deftest emath-ratio-**-integer ()
+  (should (equal (emath-ratio-**-integer '(2 . 3) 1) '(2 . 3)))
+  (should (equal (emath-ratio-**-integer '(2 . 3) -1) '(3 . 2)))
+  (should (equal (emath-ratio-**-integer '(-2 . 3) -1) '(-3 . 2)))
+  (should (equal (emath-ratio-**-integer '(5 . 7) 2) '(25 . 49)))
+  (should (equal (emath-ratio-**-integer '(5 . 7) -2) '(49 . 25)))
+  )
 
 
 ;;; primitives
@@ -350,3 +504,68 @@ ex: (* (* x y) z (/ u (/ v w))) => (x y z u (** v -1) w)"
 
 (defun app-p (op e)
   (and (consp e) (eq (car e) op)))
+
+(defun emath-insert (map combine omitp key value)
+  (let ((pair (assoc key map)))
+    (if (not pair)
+        (setq map (append map `((,key . ,value))))
+      (let ((new (funcall combine value (cdr pair))))
+        (if (funcall omitp new)
+            (setq map (delq pair map))
+          (setf (cdr pair) new)))))
+  map)
+
+(defun emath-topological-sort (edges node-eq-p from to)
+    ;; Alist mapping each node to a list of the form (count . targets), where
+    ;; count is the number of inbound edges, and targets is a set of the targets
+    ;; of its outbound edges.
+    (let (nodes)
+      (dolist (edge edges)
+        (let ((from (funcall from edge))
+              (to (funcall to edge)))
+          (let ((entry (cl-assoc to nodes :test node-eq-p)))
+            (if entry (incf (cadr entry))
+              (push (list to 1) nodes)))
+          (let ((entry (cl-assoc from nodes :test node-eq-p)))
+            (if entry (push to (cddr entry))
+              (push (list from 0 to) nodes)))))
+
+      ;; Divide the node list into those that have no incoming edges (`ready')
+      ;; and those that do (`pending').
+      (let (ready pending)
+        (dolist (node nodes)
+          (if (zerop (cadr node))
+              (push node ready)
+            (push node pending)))
+
+        ;; Treat `ready` as a working queue of ready nodes. Repeatedly: dequeue
+        ;; a node, add it to the result, delete its outgoing edges, and enqueue
+        ;; any `pending' nodes whose incoming count drops to zero.
+        (let (sorted)
+          (while (consp ready)
+            (let ((node (pop ready)))
+              (push (car node) sorted)
+              (dolist (to (cddr node))
+                (let ((entry (cl-assoc to pending :test node-eq-p)))
+                  (when (zerop (decf (cadr entry)))
+                    (setq pending (delq entry pending))
+                    (setq ready (nconc ready (list entry))))))))
+          (reverse sorted)))))
+
+(defconst emath-test-dag
+  '((5 . 11)
+    (7 . 11) (7 . 8)
+    (3 . 8) (3 . 10)
+    (11 . 2) (11 . 9) (11 . 10)
+    (8 . 9)))
+
+(ert-deftest emath-topological-sort ()
+  (should (equal (emath-topological-sort '((3 . 8) (3 . 10)) #'eq #'car #'cdr)
+                 '(3 8 10)))
+  (should (equal (emath-topological-sort emath-test-dag #'eq #'car #'cdr)
+                 '(5 7 3 11 8 10 2 9)))
+)
+
+
+
+(provide 'emath)
